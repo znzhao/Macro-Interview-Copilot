@@ -1,0 +1,6 @@
+streamlit>=1.38,<2
+supabase>=2.7,<3
+pydantic>=2.7,<3
+plotly>=5.22,<6
+python-dotenv>=1.0,<2
+rapidfuzz>=3.9,<4

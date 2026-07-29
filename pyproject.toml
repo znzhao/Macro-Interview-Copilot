@@ -1,0 +1,73 @@
+[project]
+name = "macro-interview-copilot"
+version = "0.1.0"
+# 3.11 is the floor: StrEnum (3.11+) is the newest language feature used.
+# Local dev here runs 3.11, CI runs 3.12 — tooling targets the floor so code
+# that would break on the older interpreter is caught before it ships.
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "streamlit.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "supabase.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires a local Postgres instance",
+    "llm: uses recorded LLM fixtures",
+    "golden: costs money, run on demand only",
+]
+
+[tool.importlinter]
+root_package = "core"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "engine does not import streamlit"
+type = "forbidden"
+source_modules = ["core.engine"]
+forbidden_modules = ["streamlit"]
+
+[[tool.importlinter.contracts]]
+name = "llm does not import streamlit or repositories"
+type = "forbidden"
+source_modules = ["core.llm"]
+forbidden_modules = ["streamlit", "core.db.repositories"]
+
+[[tool.importlinter.contracts]]
+name = "repositories do not import streamlit"
+type = "forbidden"
+source_modules = ["core.db.repositories"]
+forbidden_modules = ["streamlit"]
+
+[[tool.importlinter.contracts]]
+name = "models import nothing from the project"
+type = "forbidden"
+source_modules = ["core.models"]
+forbidden_modules = ["core.engine", "core.llm", "core.db", "core.auth", "core.config"]
+
+[[tool.importlinter.contracts]]
+name = "layers point downward"
+type = "layers"
+layers = [
+    "core.engine",
+    "core.llm",
+    "core.db",
+    "core.models",
+]
