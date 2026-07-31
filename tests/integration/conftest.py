@@ -141,5 +141,12 @@ def as_user(conn: psycopg.Connection, user_id: uuid.UUID | None) -> Iterator[Non
     try:
         yield
     finally:
+        # A test that asserts a policy *denies* something leaves the transaction
+        # aborted, and Postgres then rejects every further statement until it is
+        # rolled back — including this cleanup. Without the rollback the fixture
+        # fails on exactly the cases it exists to verify, turning a correct
+        # policy into a red test.
+        if conn.info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
+            conn.rollback()
         conn.execute("SELECT set_config('request.jwt.claim.sub', '', false)")
         conn.execute("RESET ROLE")

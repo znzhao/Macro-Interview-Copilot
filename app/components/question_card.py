@@ -9,34 +9,10 @@ from uuid import UUID
 
 import streamlit as st
 
+from app.components.badges import verification_badge
 from core.models.question import Question
 
-_VERIFICATION_LABELS: dict[str, tuple[str, str]] = {
-    "verified_interview": ("🟢 Verified interview", "Reported from a real interview."),
-    "multiple_independent_reports": (
-        "🟢 Multiple reports",
-        "Corroborated by more than one independent interview report.",
-    ),
-    "official_publication": (
-        "🔵 Official publication",
-        "Drawn from an official research publication.",
-    ),
-    "official_job_material": (
-        "🔵 Official job material",
-        "Drawn from official hiring materials.",
-    ),
-    "synthesized_from_official_topics": (
-        "🟡 Synthesized",
-        "Derived from official research topics — not a reported interview question.",
-    ),
-    "ai_generated": ("🟠 AI-generated", "Drafted by AI. Not yet source-verified."),
-    "user_submitted": ("🟠 User-submitted", "Submitted by a community member."),
-}
-
-
-def verification_badge(level: str) -> None:
-    label, tooltip = _VERIFICATION_LABELS.get(level, (level, ""))
-    st.caption(label, help=tooltip or None)
+__all__ = ["question_card", "question_id_from_key", "verification_badge"]
 
 
 def question_card(
@@ -57,8 +33,7 @@ def question_card(
             verification_badge(question.verification_level.value)
 
         meta = (
-            f"`{question.module.value}` · `{question.topic}` · "
-            f"{question.difficulty.value.title()}"
+            f"`{question.module.value}` · `{question.topic}` · {question.difficulty.value.title()}"
         )
         if question.institutions:
             meta += " · " + ", ".join(question.institutions[:3])

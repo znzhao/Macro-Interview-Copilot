@@ -154,19 +154,46 @@ def _ensure_profile_loaded() -> None:
         st.stop()
 
 
+def _inbox_title() -> str:
+    user = get_auth_user()
+    if user is None:
+        return "Inbox"
+    try:
+        from core.db.client import get_client_as
+        from core.db.repositories.notifications import NotificationRepository
+
+        client = get_client_as(user.access_token, user.refresh_token)
+        unread = NotificationRepository(client).unread_count(user.id)
+    except BackendUnavailable:
+        return "Inbox"
+    return f"Inbox ({unread})" if unread else "Inbox"
+
+
 def _build_navigation() -> Any:  # noqa: ANN401 - st.navigation() has no exported type
     profile = st.session_state.get("profile")
     is_admin = bool(profile and profile.is_admin)
 
-    pages = [
-        st.Page("app/pages/1_Dashboard.py", title="Dashboard", icon="🏠"),
-        st.Page("app/pages/2_Question_Bank.py", title="Question Bank", icon="📚"),
+    account_pages = [
+        st.Page("app/pages/6_Inbox.py", title=_inbox_title(), icon="📥"),
         st.Page("app/pages/7_Settings.py", title="Settings", icon="⚙️"),
     ]
     if is_admin:
-        pages.append(st.Page("app/pages/9_Admin.py", title="Admin", icon="🛡️"))
+        account_pages.append(st.Page("app/pages/9_Admin.py", title="Admin", icon="🛡️"))
 
-    return st.navigation(pages)
+    sections = {
+        "Practice": [st.Page("app/pages/1_Dashboard.py", title="Dashboard", icon="🏠")],
+        "Library": [
+            st.Page("app/pages/2_Question_Bank.py", title="Question Bank", icon="📚"),
+            st.Page("app/pages/3_Knowledge.py", title="Knowledge", icon="📖"),
+        ],
+        "Create": [
+            st.Page("app/pages/4_Author.py", title="Author", icon="✍️"),
+            st.Page("app/pages/5_My_Drafts.py", title="My Drafts", icon="🗂️"),
+        ],
+        "Account": account_pages,
+    }
+
+    return st.navigation(sections)
 
 
 def main() -> None:

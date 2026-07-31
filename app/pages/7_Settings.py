@@ -7,14 +7,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from app.state import (
-    clear_llm_api_key,
-    get_auth_user,
-    get_llm_api_key,
-    get_llm_provider,
-    get_session_token_usage,
-    set_llm_api_key,
-)
+from app.components.api_key_gate import render_key_form
+from app.state import get_auth_user, get_session_token_usage
 from core.db.client import get_client_as
 from core.db.errors import BackendUnavailable
 from core.db.repositories.profiles import ProfileRepository
@@ -72,38 +66,11 @@ st.divider()
 
 st.subheader("LLM API key")
 st.caption(
-    "Your key is used only in this browser session and is **never** written to the "
-    "database, logs, or exported data. Mock interviews and AI-assisted question "
-    "authoring are unavailable without one; browsing, notes, and favorites work fully "
-    "without one. Full LLM provider support (evaluation, follow-ups) lands in Phase 2 "
-    "— this key is stored and ready for it."
+    "Mock interviews and AI-assisted question/knowledge authoring are unavailable "
+    "without a key; browsing, notes, and favorites work fully without one."
 )
 
-current_provider = get_llm_provider()
-current_key = get_llm_api_key()
-
-with st.form("llm_key_form"):
-    provider = st.selectbox(
-        "Provider",
-        options=["openai", "anthropic", "gemini"],
-        index=["openai", "anthropic", "gemini"].index(current_provider)
-        if current_provider
-        else 0,
-    )
-    api_key = st.text_input("API key", type="password", value="")
-    save = st.form_submit_button("Save key for this session")
-
-if save and api_key:
-    set_llm_api_key(provider, api_key)
-    st.success("Key saved for this session.")
-
-if current_key:
-    st.caption(f"A key is currently set for **{current_provider}**.")
-    if st.button("Clear key"):
-        clear_llm_api_key()
-        st.rerun()
-else:
-    st.caption("No key currently set.")
+render_key_form()
 
 st.caption(f"Session token usage so far: {get_session_token_usage():,}")
 

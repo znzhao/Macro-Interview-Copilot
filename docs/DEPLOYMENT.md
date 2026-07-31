@@ -102,15 +102,19 @@ You should see **11 tables**. Ten of them — `profiles`, `questions`, `question
 
 The eleventh, `schema_migrations`, is an internal migration ledger touched only by direct-connection admin scripts, so `0002` deliberately doesn't cover it. It will read `true` if you chose "Run and enable RLS" and `false` otherwise — both are fine.
 
-> **Why not `scripts/apply_migrations.py`?** It works and records checksums in `schema_migrations`, which is the right tool for *later* migrations. But it needs the direct Postgres connection string and psycopg working locally, which is more moving parts for a first run. The SQL Editor is fine for the initial two. If you use the SQL Editor, record them manually so the script doesn't try to re-apply them later:
+> **Why not `scripts/apply_migrations.py`?** It works and records checksums in `schema_migrations`, which is the right tool for *later* migrations. But it needs the direct Postgres connection string and psycopg working locally, which is more moving parts for a first run. The SQL Editor is fine for the initial two. If you use the SQL Editor, record them manually so the script doesn't try to re-apply them later — but the checksum has to be the file's **real** SHA-256, not a placeholder string: the script hard-fails (by design — it's what stops someone from silently editing an applied migration) if a recorded checksum doesn't match the file on disk. Compute the real ones and generate the exact `insert` to run:
 >
-> ```sql
-> insert into schema_migrations (version, checksum) values
->   ('0001_init', 'applied-manually'),
->   ('0002_rls',  'applied-manually');
+> ```bash
+> ./.venv/Scripts/python.exe -c "
+> import hashlib
+> from pathlib import Path
+> for name in ['0001_init', '0002_rls']:
+>     p = Path('core/db/migrations') / f'{name}.sql'
+>     print(f\"insert into schema_migrations (version, checksum) values ('{name}', '{hashlib.sha256(p.read_text(encoding='utf-8').encode('utf-8')).hexdigest()}') on conflict (version) do nothing;\")
+> "
 > ```
 >
-> Note this makes the script's checksum guard inert for these two files specifically — an acceptable trade for the first run, since you'll never edit an applied migration anyway.
+> Paste the two `insert` statements this prints into the SQL Editor and run them.
 
 ---
 
@@ -386,3 +390,5 @@ Note that rotating does not remove the key from Git history if it was ever commi
 # 10. Where this leaves you
 
 Once §1–§7 are done, [Phase 1's acceptance criteria](IMPLEMENTATION_GUIDE.md#phase-1--foundation) are testable end-to-end: sign up, browse and filter the bank, favorite and annotate, sign out, sign in from another device, and see your data. That is the point at which Phase 1 stops being "code complete" and becomes actually verified — see the Caveats in [PHASE_TRACKER.md](../PHASE_TRACKER.md).
+
+**Moving this deployment to Phase 2?** See [IMPLEMENTATION_GUIDE §8 — Deploying Phase 2](IMPLEMENTATION_GUIDE.md#8-deploying-phase-2): three new migrations, no new secrets, and a step-by-step smoke test covering the whole author → submit → review → notify loop.

@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
+from core.models.answer_key import AnswerKey
 from core.models.enums import (
     TOPICS_BY_MODULE,
     Difficulty,
@@ -52,17 +53,21 @@ class Question(BaseModel):
     source_url: HttpUrl | None = None
     secondary_sources: tuple[SecondarySource, ...] = ()
     follow_up_questions: tuple[str, ...] = ()
+    answer_key: AnswerKey = AnswerKey()
     author_id: UUID | None = None
     owner_id: UUID | None = None
+    source_question_id: UUID | None = None
     upvotes: int = 0
+    downvotes: int = 0
     created_at: datetime
     updated_at: datetime
 
-    @model_validator(mode="after")
-    def _verified_requires_source(self) -> Question:
-        if self.tier is QuestionTier.VERIFIED and self.source_url is None:
-            raise ValueError("verified questions require source_url")
-        return self
+    # _verified_requires_source was removed under D11: verified now means "an
+    # admin reviewed this and vouches for its quality", not traceable
+    # provenance. The CHECK constraint it mirrored (verified_needs_source) was
+    # dropped in core/db/migrations/0003_content_governance.sql for the same
+    # reason — it made AI-authored questions permanently un-promotable.
+    # Provenance lives entirely in verification_level now.
 
     @model_validator(mode="after")
     def _private_requires_owner(self) -> Question:
@@ -94,12 +99,11 @@ class QuestionDraft(BaseModel):
     source_url: HttpUrl | None = None
     secondary_sources: tuple[SecondarySource, ...] = ()
     follow_up_questions: tuple[str, ...] = ()
+    answer_key: AnswerKey = AnswerKey()
 
-    @model_validator(mode="after")
-    def _verified_requires_source(self) -> QuestionDraft:
-        if self.tier is QuestionTier.VERIFIED and self.source_url is None:
-            raise ValueError("verified questions require source_url")
-        return self
+    # No verified/source validator here either — see the note on Question. A
+    # draft may target tier=verified with no source_url; only is_admin() (RLS)
+    # gates who may actually write tier='verified'.
 
     @model_validator(mode="after")
     def _topic_belongs_to_module(self) -> QuestionDraft:
@@ -124,6 +128,7 @@ class QuestionPatch(BaseModel):
     source_url: HttpUrl | None = None
     secondary_sources: tuple[SecondarySource, ...] | None = None
     follow_up_questions: tuple[str, ...] | None = None
+    answer_key: AnswerKey | None = None
 
     @model_validator(mode="after")
     def _topic_requires_module_context(self) -> QuestionPatch:
@@ -148,3 +153,5 @@ class QuestionFilters(BaseModel):
     min_upvotes: int | None = None
     favorited_only: bool = False
     unattempted_only: bool = False
+    mine_only: bool = False
+    has_answer_key: bool = False

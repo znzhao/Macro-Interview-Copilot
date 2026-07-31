@@ -3,7 +3,7 @@
 > AI-powered interview training for global macro hedge funds, central banks, and international financial institutions.
 > Web-hosted on Streamlit Community Cloud, backed by Supabase, powered by user-supplied LLM keys.
 
-**Spec version:** 2.0 · **Status:** Approved for implementation · **Last updated:** 2026-07-28
+**Spec version:** 3.0 · **Status:** Phase 1 shipped; Phase 2 approved for implementation · **Last updated:** 2026-07-30
 
 ---
 
@@ -30,17 +30,22 @@ This file is the entry point. Detailed specifications live in [`docs/`](docs/).
 
 A web application that trains candidates to **think like professional macro investors and economists**, not to memorize answers.
 
-Three capabilities, in order of importance:
+Four capabilities:
 
-1. **Mock interview** — an AI interviewer seeded with real, sourced interview questions that asks adaptive follow-ups based on what the candidate actually said.
+1. **Mock interview** — an AI interviewer seeded with real interview questions that asks adaptive follow-ups based on what the candidate actually said.
 2. **Structured evaluation** — every answer scored against a five-dimension anchored rubric, with per-dimension history that reveals genuine weaknesses.
-3. **Curated question bank** — a traceable, source-verified repository of macro interview questions, extended by a community tier and by AI-assisted authoring.
+3. **Question bank** — a governed repository of macro interview questions across three tiers, extended by an AI authoring agent and curated by admin review.
+4. **Knowledge bank** — user-uploaded and AI-drafted macro reference documents under the same three-tier governance, which double as **grounding material the authoring agent reads** when generating questions.
+
+Capabilities 3 and 4 are built first ([Phase 2](docs/IMPLEMENTATION_GUIDE.md#phase-2--content-creation--community)). A thin bank makes a good interviewer worthless, so the content engine precedes the thing that consumes content.
 
 ## 1.2 What this is not
 
 - Not a flashcard app or trivia bank.
 - Not a general-purpose chatbot wrapper.
-- Not a model-answer library. **The system must never let a candidate substitute a memorized script for reasoning.** This is the product's central guardrail; see [AI_SPEC §3.3](docs/AI_SPEC.md#33-what-the-evaluator-must-and-must-not-return).
+- **Not a model-answer library.** The system must never let a candidate substitute a memorized script for reasoning. This is the product's central guardrail — see [AI_SPEC §3.3](docs/AI_SPEC.md#33-what-the-evaluator-must-and-must-not-return).
+
+> **How answer keys coexist with that guardrail.** Questions carry an *answer key*: five labelled sections of at most eight short bullets, mirroring the scoring dimensions. Those limits are the enforcement, not a formatting preference — a bulleted skeleton cannot be recited as an interview answer, so the candidate still has to build the argument. The constraint is imposed by the prompt, the JSON schema, a Pydantic model, and a database CHECK, because a guardrail that lives only in a prompt is a suggestion. See [D10](docs/DECISIONS.md#d10--answer-keys-are-structured-bullets-never-prose).
 
 ## 1.3 Target roles
 
@@ -66,21 +71,25 @@ These are not decoration — they are literally the five scoring dimensions in [
 
 ```
    Git ──────────────► Streamlit Community Cloud ──────────► Supabase
-   prompts/           app/pages   (UI only)                  Auth (magic link, Google)
-   content/           core/engine (pure Python)              Postgres + RLS
-   migrations/        core/llm    (provider adapters)        questions, sessions, turns,
-                      core/db     (repositories)             evaluations, notes, mastery
-                            │
+   prompts/           app/pages   (UI only)                  Auth (email + password)
+   content/  (seed)   core/engine (pure Python)              Postgres + RLS
+   migrations/        core/agent  (tool loop, bounded)       questions, knowledge,
+                      core/llm    (provider adapters)        sessions, turns, evaluations,
+                      core/db     (repositories)             votes, comments, reports,
+                            │                                review_requests, notifications
                             └──────► OpenAI / Anthropic / Gemini
                                      using the user's own API key
 ```
 
-The nine decisions behind this shape — and what each one costs — are in [docs/DECISIONS.md](docs/DECISIONS.md). The short version:
+The fifteen decisions behind this shape — and what each one costs — are in [docs/DECISIONS.md](docs/DECISIONS.md). The short version:
 
 - **Streamlit Cloud** means an ephemeral filesystem and a shared ~1GB container, which forces managed Postgres and rules out in-process vector indexes.
 - **Supabase** provides auth and per-user isolation via Row Level Security, which is the authorization boundary — not the UI.
 - **BYO API key** eliminates unbounded cost on a public app; keys live in session memory and are never persisted.
 - **Anchored 0–4 rubric, totals computed in Python** is what makes scores comparable enough to trend over time.
+- **Both banks are governed identically** — private → community → verified, with votes, comments, reports, and admin promotion. One model to learn, one RLS pattern to get right.
+- **`verified` means an admin vouched for it, not that it is sourced** ([D11](docs/DECISIONS.md#d11--verified-means-admin-approved-quality-not-traceable-provenance)). Provenance lives entirely in the verification badge, which makes that badge load-bearing rather than decorative.
+- **The authoring agent has tools and therefore an attack surface.** It fetches URLs on a stranger's instruction from a public app; the SSRF containment in [AI_SPEC §7.1](docs/AI_SPEC.md#71-url-fetching--ssrf-containment) is a hard requirement. It holds no privilege its operator lacks, and it never writes to the database.
 
 ---
 
@@ -96,6 +105,11 @@ The nine decisions behind this shape — and what each one costs — are in [doc
 | **Anchor** | The written description defining a specific rubric score. See [AI_SPEC §3.1](docs/AI_SPEC.md#31-the-five-dimensions-and-their-anchors). |
 | **BYO key** | Bring Your Own Key — the user supplies their own LLM credentials. |
 | **Module / Topic** | Controlled-vocabulary taxonomy for questions. Free-text drift here silently breaks mastery tracking. See [DATA_SPEC §9](docs/DATA_SPEC.md#9-controlled-vocabularies). |
+| **Answer key** | Five sections of short bullets attached to a question, mirroring the scoring dimensions. Deliberately not prose. See [D10](docs/DECISIONS.md#d10--answer-keys-are-structured-bullets-never-prose). |
+| **Knowledge bank** | The second governed bank: Markdown reference documents, uploaded or AI-drafted, which also serve as grounding for the authoring agent. See [D12](docs/DECISIONS.md#d12--the-knowledge-base-is-a-three-tier-postgres-bank). |
+| **Grounding** | Knowledge documents the user selects to inject into an authoring prompt, capped at 8,000 tokens. |
+| **Clone** | The verified copy created when an admin approves a submission. The community original stays with its author. See [D14](docs/DECISIONS.md#d14--promotion-to-verified-clones-the-row). |
+| **Review request** | An author asking an admin to promote their content to verified. Irreversible once approved. |
 
 ---
 

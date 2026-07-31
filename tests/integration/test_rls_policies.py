@@ -48,9 +48,7 @@ class TestProfilesIsolation:
         user_b = make_user()
 
         with as_user(pg_conn, user_a):
-            rows = pg_conn.execute(
-                "SELECT id FROM profiles WHERE id = %s", (user_b,)
-            ).fetchall()
+            rows = pg_conn.execute("SELECT id FROM profiles WHERE id = %s", (user_b,)).fetchall()
 
         assert rows == []
 
@@ -58,9 +56,7 @@ class TestProfilesIsolation:
         user_a = make_user()
 
         with as_user(pg_conn, user_a):
-            rows = pg_conn.execute(
-                "SELECT id FROM profiles WHERE id = %s", (user_a,)
-            ).fetchall()
+            rows = pg_conn.execute("SELECT id FROM profiles WHERE id = %s", (user_a,)).fetchall()
 
         assert len(rows) == 1
 
@@ -109,9 +105,7 @@ class TestQuestionsVisibility:
 
         assert len(rows) == 1
 
-    def test_draft_community_question_not_visible_until_published(
-        self, pg_conn, make_user
-    ) -> None:
+    def test_draft_community_question_not_visible_until_published(self, pg_conn, make_user) -> None:
         author = make_user()
         viewer = make_user()
         qid = _insert_question(
@@ -165,9 +159,7 @@ class TestInterviewDataIsolation:
 
         assert rows == []
 
-    def test_user_cannot_read_turns_of_another_users_session(
-        self, pg_conn, make_user
-    ) -> None:
+    def test_user_cannot_read_turns_of_another_users_session(self, pg_conn, make_user) -> None:
         """interview_turns has no user_id column; its policy joins through
         interview_sessions. This is the easiest policy to get wrong.
         """
@@ -245,9 +237,7 @@ class TestNotesAndFavoritesIsolation:
             pg_conn.commit()
 
         with as_user(pg_conn, user_b):
-            rows = pg_conn.execute(
-                "SELECT id FROM notes WHERE user_id = %s", (user_a,)
-            ).fetchall()
+            rows = pg_conn.execute("SELECT id FROM notes WHERE user_id = %s", (user_a,)).fetchall()
 
         assert rows == []
 
@@ -258,16 +248,16 @@ class TestNotesAndFavoritesIsolation:
             pg_conn, tier="private", status="draft", owner_id=user_a, author_id=user_a, ref="N0002"
         )
 
-        with as_user(pg_conn, user_b):
+        # WITH CHECK *raises* on a violating INSERT, unlike USING, which silently
+        # filters rows on read. Favoriting on someone else's behalf is therefore a
+        # hard error, not a no-op that quietly writes zero rows.
+        with as_user(pg_conn, user_b), pytest.raises(psycopg.errors.InsufficientPrivilege):
             pg_conn.execute(
                 "INSERT INTO favorites (user_id, question_id) VALUES (%s, %s)",
                 (user_a, qid),
             )
-        # RLS silently inserts 0 rows rather than raising, because the WITH CHECK
-        # clause filters the attempted row rather than denying the statement.
-        pg_conn.rollback()
 
-        rows = pg_conn.execute(
-            "SELECT 1 FROM favorites WHERE user_id = %s", (user_a,)
-        ).fetchall()
+        # Read back as the table owner (RLS bypassed) so this asserts the row is
+        # genuinely absent, not merely invisible to the current role.
+        rows = pg_conn.execute("SELECT 1 FROM favorites WHERE user_id = %s", (user_a,)).fetchall()
         assert rows == []

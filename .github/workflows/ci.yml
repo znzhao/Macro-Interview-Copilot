@@ -48,6 +48,9 @@ jobs:
       - name: unit tests
         run: pytest tests/unit -v
 
+      - name: agent tests (tools, loop, limits — SSRF suite included)
+        run: pytest tests/agent -v
+
       - name: integration tests (RLS + schema)
         run: pytest tests/integration -v -m integration
 

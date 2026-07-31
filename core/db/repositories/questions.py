@@ -37,11 +37,13 @@ def _apply_filters(query: Any, filters: QuestionFilters) -> Any:  # noqa: ANN401
     if filters.target_roles:
         query = query.overlaps("target_roles", [r.value for r in filters.target_roles])
     if filters.verification_levels:
-        query = query.in_(
-            "verification_level", [v.value for v in filters.verification_levels]
-        )
+        query = query.in_("verification_level", [v.value for v in filters.verification_levels])
     if filters.min_upvotes is not None:
         query = query.gte("upvotes", filters.min_upvotes)
+    if filters.has_answer_key:
+        query = query.neq("answer_key", "{}")
+    # mine_only is intentionally not applied here — see the identical note in
+    # core/db/repositories/knowledge.py.
     return query
 
 
@@ -127,12 +129,7 @@ class QuestionRepository:
     def update(self, question_id: UUID, patch: QuestionPatch) -> Question:
         def _do() -> Question:
             payload = patch.model_dump(mode="json", exclude_none=True)
-            resp = (
-                self._client.table(_TABLE)
-                .update(payload)
-                .eq("id", str(question_id))
-                .execute()
-            )
+            resp = self._client.table(_TABLE).update(payload).eq("id", str(question_id)).execute()
             if not resp.data:
                 raise NotFound(f"question {question_id} not found")
             return _row_to_question(cast(dict[str, Any], resp.data[0]))
@@ -147,12 +144,18 @@ class QuestionRepository:
 
         translate_errors(_do)
 
-    def upvote(self, question_id: UUID, user_id: UUID) -> int:
-        def _do() -> int:
-            self._client.table("question_votes").insert(
-                {"question_id": str(question_id), "user_id": str(user_id)}
-            ).execute()
-            question = self.get_or_raise(question_id)
-            return question.upvotes
+    def set_tier(self, question_id: UUID, tier: str) -> None:
+        """Used by the "share with community" / "return to private" actions
+        (tier flips a single row — no clone; see docs/CONTENT_SPEC.md #2).
+        Promotion to verified is a separate act — see ReviewRepository.approve.
+        """
 
-        return translate_errors(_do)
+        def _do() -> None:
+            self._client.table(_TABLE).update({"tier": tier}).eq("id", str(question_id)).execute()
+
+        translate_errors(_do)
+
+    # Voting moved to VoteRepository in Phase 2 (core/db/repositories/votes.py),
+    # since votes are now ±1 and shared between both banks rather than a single
+    # question-only upvote insert. The old insert here also relied on a DB
+    # DEFAULT 1 on question_votes.value that migration 0003 removed.

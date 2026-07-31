@@ -122,9 +122,7 @@ def sign_in_with_magic_link(email: str, *, redirect_to: str) -> None:
     from core.db.client import get_client
 
     client = get_client()
-    client.auth.sign_in_with_otp(
-        {"email": email, "options": {"email_redirect_to": redirect_to}}
-    )
+    client.auth.sign_in_with_otp({"email": email, "options": {"email_redirect_to": redirect_to}})
 
 
 def start_google_oauth(*, redirect_to: str) -> str:

@@ -20,9 +20,7 @@ class FavoriteRepository:
 
     def list_for_user(self, user_id: UUID) -> list[Favorite]:
         def _do() -> list[Favorite]:
-            resp = (
-                self._client.table(_TABLE).select("*").eq("user_id", str(user_id)).execute()
-            )
+            resp = self._client.table(_TABLE).select("*").eq("user_id", str(user_id)).execute()
             return [Favorite.model_validate(row) for row in resp.data]
 
         return translate_errors(_do)

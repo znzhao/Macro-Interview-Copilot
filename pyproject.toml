@@ -26,6 +26,18 @@ ignore_missing_imports = true
 module = "supabase.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "openai.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "anthropic.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["google", "google.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
@@ -61,6 +73,28 @@ name = "models import nothing from the project"
 type = "forbidden"
 source_modules = ["core.models"]
 forbidden_modules = ["core.engine", "core.llm", "core.db", "core.auth", "core.config"]
+
+[[tool.importlinter.contracts]]
+name = "agent does not import streamlit"
+type = "forbidden"
+source_modules = ["core.agent"]
+forbidden_modules = ["streamlit"]
+
+[[tool.importlinter.contracts]]
+# core.agent is a peer of core.engine (both consume core.llm/core.db/core.models),
+# not a layer above or below it — see docs/ARCHITECTURE.md #2. A strict "layers"
+# contract can't express a peer relationship, so this is two explicit forbidden
+# contracts instead of folding agent into the ordered layers list below.
+name = "engine does not import agent"
+type = "forbidden"
+source_modules = ["core.engine"]
+forbidden_modules = ["core.agent"]
+
+[[tool.importlinter.contracts]]
+name = "agent does not import engine"
+type = "forbidden"
+source_modules = ["core.agent"]
+forbidden_modules = ["core.engine"]
 
 [[tool.importlinter.contracts]]
 name = "layers point downward"

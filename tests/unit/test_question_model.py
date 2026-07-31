@@ -42,9 +42,14 @@ def test_valid_verified_question_constructs() -> None:
     assert q.tier is QuestionTier.VERIFIED
 
 
-def test_verified_without_source_url_rejected() -> None:
-    with pytest.raises(ValidationError, match="source_url"):
-        Question(**_base_kwargs(source_url=None))
+def test_verified_without_source_url_is_allowed() -> None:
+    # D11: verified now means "an admin vouches for this", not traceable
+    # provenance — dropping the requirement is what makes AI-authored
+    # questions promotable at all. Provenance still shows up via
+    # verification_level, just not enforced as a presence check here.
+    q = Question(**_base_kwargs(source_url=None, verification_level=VerificationLevel.AI_GENERATED))
+    assert q.source_url is None
+    assert q.tier is QuestionTier.VERIFIED
 
 
 def test_private_without_owner_rejected() -> None:
@@ -69,17 +74,20 @@ def test_question_length_bounds() -> None:
         Question(**_base_kwargs(question="too short"))
 
 
-def test_draft_verified_requires_source() -> None:
-    with pytest.raises(ValidationError, match="source_url"):
-        QuestionDraft(
-            tier=QuestionTier.VERIFIED,
-            module=Module.INFLATION,
-            topic="Inflation Dynamics",
-            question="Why can inflation remain persistent despite restrictive policy?",
-            difficulty=Difficulty.HARD,
-            verification_level=VerificationLevel.AI_GENERATED,
-            source_url=None,
-        )
+def test_draft_verified_without_source_is_allowed() -> None:
+    # D11: the Pydantic-level requirement was removed along with the DB CHECK.
+    # Who may actually persist tier='verified' is enforced by RLS (is_admin()),
+    # not by this model.
+    draft = QuestionDraft(
+        tier=QuestionTier.VERIFIED,
+        module=Module.INFLATION,
+        topic="Inflation Dynamics",
+        question="Why can inflation remain persistent despite restrictive policy?",
+        difficulty=Difficulty.HARD,
+        verification_level=VerificationLevel.AI_GENERATED,
+        source_url=None,
+    )
+    assert draft.source_url is None
 
 
 def test_community_draft_without_source_is_allowed() -> None:

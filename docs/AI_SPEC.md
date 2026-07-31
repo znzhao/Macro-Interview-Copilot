@@ -28,12 +28,41 @@ class LLMProvider(Protocol):
         timeout_s: float = 60.0,
     ) -> StructuredResult: ...
 
+    def complete_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec],
+        model: str,
+        max_tokens: int = 4000,
+        temperature: float = 0.7,
+        timeout_s: float = 90.0,
+    ) -> ToolTurnResult: ...
+
     def validate_key(self) -> KeyStatus: ...
 ```
 
 `StructuredResult` carries `data: dict` (schema-validated), `model`, `input_tokens`, `output_tokens`, `latency_ms`, `raw`.
 
+`ToolTurnResult` carries `text: str | None`, `tool_calls: list[ToolCall]`, plus the same token and latency fields. **One call, one turn** — the provider adapter never loops. Looping is the agent's job (§6), which keeps the caps enforceable in one place.
+
 Implementations: `openai_provider.py`, `anthropic_provider.py`, `gemini_provider.py`. `registry.py` resolves provider by name and validates keys.
+
+## 1.1a The tool-calling boundary
+
+`complete_with_tools` is where the three providers diverge most. `Message`, `ToolSpec`, `ToolCall`, and `ToolResult` are **our** types; each adapter translates in both directions and nothing provider-shaped escapes into `core/agent/`.
+
+| Concern | Divergence to absorb in the adapter |
+|---|---|
+| Tool result shape | Anthropic `tool_result` blocks · OpenAI `role="tool"` messages · Gemini `functionResponse` parts |
+| Parallel tool calls | Supported by all three, with different ordering and id conventions |
+| Malformed arguments | Some providers emit unparseable JSON rather than erroring; adapters raise `LLMToolArgError` uniformly |
+| Text alongside calls | Some emit both in one turn, some do not. Ours always allows both. |
+
+Each adapter is tested against the same shared scenario table in `tests/llm/` — recorded fixtures, no live calls. If a scenario passes for one provider and not another, the abstraction is wrong.
+
+> The abstraction is deliberately drawn so that **one provider can ship first.** `registry.py` reports per-provider capabilities; a user whose key belongs to a provider without agent support gets the one-shot authoring path and a clear explanation, never a crash.
 
 ## 1.2 Requirements
 
@@ -69,8 +98,10 @@ The user pays ([D4](DECISIONS.md#d4--byo-llm-api-key-session-memory-only)), so e
 | `interviewer.v1.md` | Generate an adaptive follow-up from the transcript so far | `FollowUpSchema` |
 | `evaluator.v1.md` | Score an answer on five anchored dimensions | `EvaluationSchema` |
 | `coach.v1.md` | Post-session synthesis: patterns, priorities, drills | `CoachingSchema` |
-| `question_author.v1.md` | Draft a new question with sourcing metadata | `QuestionDraftSchema` |
+| `question_author.v1.md` | One-shot draft: a question plus its answer key | `QuestionDraftSchema` |
 | `summarizer.v1.md` | Compress a long transcript for context reuse | `SummarySchema` |
+| `author_agent.v1.md` | System prompt for the agentic authoring loop (§6) | tool calls, then `QuestionDraftSchema` |
+| `knowledge_author.v1.md` | Draft a knowledge document from a topic or supplied material | `KnowledgeDraftSchema` |
 
 ## 2.3 Structure convention
 
@@ -289,3 +320,98 @@ Applied per dimension and to the total. Implemented as a Postgres trigger functi
 ## 5.4 Testable properties
 
 The unit suite asserts: determinism under a fixed seed; quota compliance; that no excluded question is ever returned; that a user with one very weak topic sees it over-represented but not exclusively; and that an empty mastery table degrades gracefully to the non-adaptive path.
+
+---
+
+# 6. Authoring Agent
+
+`core/agent/`. Implements [D13](DECISIONS.md#d13--question-authoring-is-an-agentic-loop-with-tools). Like the rest of `core/`, it **must not import `streamlit`** — the loop is driven by a caller that owns the UI.
+
+## 6.1 The two paths
+
+Both produce the same artifact, and the second is a superset of the first.
+
+**One-click.** Pick module, topic, difficulty, press Generate. No tools, no conversation — a single `complete_structured` call against `question_author.v1.md`. This path exists because most users want a good question, not a collaborator, and it must stay fast and cheap. **It is not a degraded fallback; it is the default.**
+
+**Refinement.** The user adds grounding (knowledge documents, a URL, an uploaded file) and talks to the agent: *"make it harder"*, *"tie it to the 2022 gilt episode"*, *"the answer key misses the credit channel"*. Each exchange re-emits a complete draft, never a diff — the user always sees the whole current question and answer key, never a changelog they have to mentally apply.
+
+## 6.2 Loop shape
+
+```
+INIT ── system prompt + grounding + user request
+  ↓
+THINKING ──► tool call? ──yes──► EXECUTING TOOL ──► result appended ──┐
+  │                                                                   │
+  │  (cap: 8 tool calls, 40k tokens, 90s per turn)   ◄────────────────┘
+  ↓ no
+DRAFT ── QuestionDraftSchema validated ──► presented to user
+  ↓
+AWAITING_FEEDBACK
+  │  edit inline    → local state only, no model call
+  │  send feedback  → back to THINKING with the draft in context
+  │  regenerate     → back to INIT, same config, transcript discarded
+  │  save private   → questions row, tier=private
+  │  submit         → tier=community  (a second, explicit action submits
+  │                   it to the admin for verified review — D14)
+  ↓
+DONE
+```
+
+Two invariants:
+
+1. **A draft never auto-saves.** Nothing reaches the database until the user presses Save or Submit. Half-finished AI output must not accumulate in anyone's bank.
+2. **The user's manual edits survive a refinement turn.** Their edited text is what goes into context, not the model's last version — otherwise the model silently reverts corrections, which is infuriating and hard to notice.
+
+## 6.3 Cap exhaustion is a normal outcome
+
+Hitting the tool-call or token cap ends the turn and returns the best draft so far, labelled as incomplete. It is **never** an exception shown to the user. An agent that stops early with a usable draft is working correctly; one that raises a traceback after spending the user's money is not.
+
+---
+
+# 7. Agent Tools & Safety
+
+Four tools, in `core/agent/tools/`. The set is closed — no dynamic registration, no user-supplied tools.
+
+| Tool | Signature | Notes |
+|---|---|---|
+| `search_knowledge` | `(query, limit=5) -> [{slug, title, summary}]` | Postgres FTS over `knowledge_docs` visible to *this* user. Summaries only. |
+| `read_knowledge` | `(slug) -> {title, body_md}` | Counts against the grounding token budget. |
+| `fetch_url` | `(url) -> {title, text}` | §7.1. Extracted text only, never raw HTML or scripts. |
+| `read_upload` | `(upload_id) -> {filename, text}` | Resolves an in-memory handle from this request. Cannot reach the filesystem. |
+
+`search_knowledge` runs **through the user's own JWT**, so RLS decides what it can see. The agent is not a privilege escalation path: it must never surface a document its operator could not open themselves.
+
+## 7.1 URL fetching — SSRF containment
+
+The server making outbound requests on a stranger's instruction is the single most dangerous thing in this phase. Unconstrained, `fetch_url("http://169.254.169.254/latest/meta-data/")` reads cloud credentials.
+
+Enforced in `core/agent/tools/fetch.py`, each with a test:
+
+1. **Scheme allowlist:** `http`, `https`. Nothing else — no `file:`, `gopher:`, `data:`.
+2. **Resolve DNS first, then validate the resolved IPs**, then connect to the validated address. Validating the hostname alone loses to DNS rebinding.
+3. **Reject** loopback, private (RFC1918), link-local (`169.254.0.0/16`, including the metadata endpoint), CGNAT, multicast, reserved ranges, and IPv6 equivalents.
+4. **Redirects are followed manually, at most 3**, revalidating every hop. A permitted URL redirecting to `127.0.0.1` is the classic bypass.
+5. **10s timeout, 2 MB cap**, enforced while streaming rather than after — a chunked infinite response must not exhaust the shared container.
+6. **`Content-Type` must be HTML, plain text, or Markdown.** Extract to text; discard scripts, styles, and all markup.
+7. **No credentials, no cookies, no custom auth headers** are ever forwarded.
+
+> The fetched text is **untrusted input being placed into a prompt.** A page can contain instructions aimed at the model. Fetched content is wrapped in explicit delimiters and the system prompt states that material inside them is data to analyze, never instructions to follow. This mitigates prompt injection; it does not eliminate it, which is a further reason the agent holds no privileges the user lacks.
+
+## 7.2 Uploads
+
+`.md` and `.txt` only, **1 MB** each, at most 3 per draft, decoded as UTF-8 with replacement. Held in `st.session_state` for the request and discarded — [ARCHITECTURE §3](ARCHITECTURE.md#3-deployment-constraints) makes the filesystem ephemeral, and per [DATA_SPEC §11](DATA_SPEC.md#11-privacy--data-rights) upload content is never persisted unless the user saves it into a knowledge document.
+
+PDF and DOCX are deliberately out of scope for Phase 2: parsers are a well-known memory-exhaustion and malformed-input surface, and 1GB is shared across every concurrent user.
+
+## 7.3 Usage bounds
+
+| Bound | Value | Why |
+|---|---|---|
+| Tool calls per draft | 8 | Enough for search → read → fetch → revise |
+| Total tokens per draft | 40,000 | Caps a runaway loop on the user's own key |
+| Grounding injection | 8,000 tokens | Shown live as a budget meter while selecting docs |
+| Wall clock per turn | 90s | Beyond this, Streamlit's rerun model degrades badly |
+| Drafts per user per day | 50 | Anti-abuse; counted in Postgres, not session state |
+| Community submissions per user per day | 20 | Stops one user flooding the review queue |
+
+The daily counters live in the database precisely because `st.session_state` is per-browser-session and therefore trivially reset by opening a new tab.

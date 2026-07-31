@@ -43,12 +43,7 @@ class ProfileRepository:
     def update(self, user_id: UUID, patch: ProfilePatch) -> Profile:
         def _do() -> Profile:
             payload = patch.model_dump(mode="json", exclude_none=True)
-            resp = (
-                self._client.table(_TABLE)
-                .update(payload)
-                .eq("id", str(user_id))
-                .execute()
-            )
+            resp = self._client.table(_TABLE).update(payload).eq("id", str(user_id)).execute()
             if not resp.data:
                 raise NotFound(f"profile {user_id} not found")
             return Profile.model_validate(resp.data[0])
